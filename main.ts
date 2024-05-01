@@ -1,134 +1,177 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {App, MarkdownView, Plugin, TFile, WorkspaceWindow, View} from 'obsidian';
 
-// Remember to rename these classes and interfaces!
+export default class RawImageMouseWheelZoomPlugin extends Plugin {
+    isKeyHeldDown = false;
 
-interface MyPluginSettings {
-	mySetting: string;
-}
+    async onload() {
+        this.registerEvent(
+            this.app.workspace.on("window-open", (newWindow: WorkspaceWindow) => this.registerEvents(newWindow.win))
+        );
+        this.registerEvents(window);
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+        console.log("Loaded: Raw Image Mousewheel image zoom")
+    }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+    /**
+     * When the config key is released, we enable the scroll again and reset the key held down flag.
+     */
+    onConfigKeyUp(currentWindow: Window) {
+        this.isKeyHeldDown = false;
+        this.enableScroll(currentWindow);
+    }
 
-	async onload() {
-		await this.loadSettings();
+    onunload(currentWindow: Window = window) {
+        // Re-enable the normal scrolling behavior when the plugin unloads
+        this.enableScroll(currentWindow);
+    }
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+     /**
+     * Registers image resizing events for the specified window
+     * @param currentWindow window in which to register events
+     * @private
+     */
+    private registerEvents(currentWindow: Window) {
+        const doc: Document = currentWindow.document;
+        this.registerDomEvent(doc, "keydown", (evt) => {
+            if (evt.code === "AltLeft") {
+                this.isKeyHeldDown = true;
+            }
+        });
+        this.registerDomEvent(doc, "keyup", (evt) => {
+            if (evt.code === "AltLeft") {
+                this.onConfigKeyUp(currentWindow);
+            }
+        });
+        this.registerDomEvent(doc, "wheel", (evt) => {
+            if (this.isKeyHeldDown) {
+                // When for example using Alt + Tab to switch between windows, the key is still recognized as held down.
+                // We check if the key is really held down by checking if the key is still pressed in the event when the
+                // wheel event is triggered.
+                if (!evt.altKey) {
+                    this.onConfigKeyUp(currentWindow);
+                    return;
+                }
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+                const eventTarget = evt.target as Element;
+                
+                const targetIsCanvas: boolean = eventTarget.hasClass("canvas-node-content-blocker")
+                const targetIsCanvasNode: boolean = eventTarget.closest(".canvas-node-content") !== null;
+                const targetIsImage: boolean = eventTarget.nodeName === "IMG";
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+                if (targetIsCanvas || targetIsCanvasNode || targetIsImage) {
+                    this.disableScroll(currentWindow);
+                }
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
+                if (targetIsCanvas || targetIsCanvasNode) {
+                    // we trying to resize focused canvas node.
+                    // i think here can be implementation of zoom images in embded markdown files on canvas. 
+                }
+                else if (targetIsImage) {
+                    // Handle the zooming of the image
+                    this.handleZoom(evt, eventTarget);
+                }
+            }
+        });
+    }
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+    /**
+     * Handles zooming with the mousewheel on an image
+     * @param evt wheel event
+     * @param eventTarget targeted image element
+     * @private
+     */
+    private async handleZoom(evt: WheelEvent, eventTarget: Element) {
+        const imageUri = eventTarget.attributes.getNamedItem("src").textContent;
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+		if (imageUri == null ||  !imageUri.contains("data:image/png"))
+			return;
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		const activeFile: TFile = await this.getActivePaneWithImage(eventTarget);
+
+		let fileText = await this.app.vault.read(activeFile)
+		const originalFileText = fileText;
+
+		var origWidth = RawImageMouseWheelZoomPlugin.getImageWidth(imageUri);
+
+        const image = eventTarget as HTMLImageElement;
+
+		const currWidth = image.width;
+
+		var newWidth = origWidth;
+		var currText = "![](" + imageUri + ")";
+        var power = 0;
+
+		if (!fileText.contains(currText)) {
+			newWidth = currWidth;
+			currText = "![|" + currWidth + "](" + imageUri + ")";
+            power = Math.floor(Math.log(currWidth / origWidth) / Math.log(1.05) + 0.5);
+        }
+
+        if (evt.deltaY < 0) {
+            power++;
+        }
+        else if (newWidth > 25) {
+            power--;
+        }
+
+        var newText = "![|" + Math.floor(Math.pow(1.05, power) * origWidth) + "](" + imageUri + ")";
+
+		fileText = fileText.replace(currText, newText);
+
+		await this.app.vault.modify(activeFile, fileText)
+    }
+
+	private static getImageWidth(imageUri: string) : number {
+		const substringIndex = imageUri.indexOf("iVBOR");					// find index of start of data
+		const subString64 = imageUri.substring(substringIndex + 21, substringIndex + 28);	// grab only required chars
+		var decodedString = atob(subString64);								// decode from base64
+		var width = (decodedString.charCodeAt(0) & 63) << 26;				// data misalligned so mask with 00111111 to ignore first two bits
+		width += decodedString.charCodeAt(1) << 18;
+		width += decodedString.charCodeAt(2) << 10;
+		width += decodedString.charCodeAt(3) << 2;
+		width += (decodedString.charCodeAt(4) & 192) >> 6;					// mask with 11111100 to ignore last two bits
+		return width;
 	}
 
-	onunload() {
 
-	}
+    /**
+     * Loop through all panes and get the pane that hosts a markdown file with the image to zoom
+     * @param imageElement The HTML Element of the image
+     * @private
+     */
+    private async getActivePaneWithImage(imageElement: Element): Promise<TFile> {
+        return new Promise(((resolve, reject) => {
+            this.app.workspace.iterateAllLeaves(leaf => {
+                if (leaf.view.containerEl.contains(imageElement) && leaf.view instanceof MarkdownView) {
+                    resolve(leaf.view.file);
+                }
+            })
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+            reject(new Error("No file belonging to the image found"))
+        }))
+    }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+    // Utilities to disable and enable scrolling //
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    preventDefault(ev: WheelEvent) {
+        ev.preventDefault();
+    }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
+    wheelOpt: AddEventListenerOptions = {passive: false, capture: true }
+    wheelEvent = 'wheel' as keyof WindowEventMap;
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+    /**
+     * Disables the normal scroll event
+     */
+    disableScroll(currentWindow: Window) {
+        currentWindow.addEventListener(this.wheelEvent, this.preventDefault, this.wheelOpt);
+    }
+ 
+    /**
+     * Enables the normal scroll event
+     */
+    enableScroll(currentWindow: Window) {
+        currentWindow.removeEventListener(this.wheelEvent, this.preventDefault, this.wheelOpt);
+    }
 }

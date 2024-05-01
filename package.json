@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "raw-image-mousewheel-zoom",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "blah blah",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "raw-image-mousewheel-zoom",
+	"name": "Raw Image MouseWheel Zoom",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"description": "Bluh blah",
+	"author": "RichyF",
+	"authorUrl": "",
+	"isDesktopOnly": true
 }
